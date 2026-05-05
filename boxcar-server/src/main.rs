@@ -1,4 +1,6 @@
+use std::sync::Arc;
 use boxcar_core::registry::ServerRegistry;
+use boxcar_github::GitHubMcpServer;
 use boxcar_server::{app, state::AppState};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -11,11 +13,20 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // Build the registry. MCP server adapters will be registered here
-    // once boxcar-github (and others) exist.
-    let registry = ServerRegistry::new();
-    let state = AppState::new(registry);
+    let mut registry = ServerRegistry::new();
 
+    // Register GitHub MCP adapter if GITHUB_TOKEN is set.
+    match GitHubMcpServer::from_env() {
+        Ok(server) => {
+            registry.register(Arc::new(server));
+            info!("Registered GitHub MCP server");
+        }
+        Err(e) => {
+            tracing::warn!("GitHub MCP server not registered: {e}");
+        }
+    }
+
+    let state = AppState::new(registry);
     let app = app::build(state);
 
     let addr = "0.0.0.0:3000";

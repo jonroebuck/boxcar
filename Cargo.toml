@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "boxcar-core",
+    "boxcar-server",
     "transmission-protocols/boxcar-stdio",
     "transmission-protocols/boxcar-sse",
     "mcp-servers/boxcar-github",

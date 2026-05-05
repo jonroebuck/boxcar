@@ -1,0 +1,11 @@
+[package]
+name = "boxcar-github"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "boxcar-github"
+path = "src/main.rs"
+
+[dependencies]
+boxcar-core = { path = "../../boxcar-core" }

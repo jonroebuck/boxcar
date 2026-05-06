@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -12,19 +11,18 @@ use boxcar_core::{
 
 use crate::{
     error::GitHubError,
-    mcp::{McpRequest, McpResponse, McpToolCallResult, McpToolsListResult},
+    mcp::{McpToolCallResult, McpToolsListResult},
 };
 
 /// Adapter that connects Boxcar to GitHub's remote MCP server.
 ///
 /// Reads GITHUB_TOKEN from the environment on construction.
-/// All MCP communication is JSON-RPC 2.0 over HTTP POST.
+/// Uses GitHub's Streamable HTTP transport: POST to path-based endpoints
+/// under https://api.githubcopilot.com/mcp/
 pub struct GitHubMcpServer {
     client: Client,
     base_url: String,
     token: String,
-    /// Monotonically increasing JSON-RPC request ID.
-    next_id: AtomicU64,
 }
 
 impl GitHubMcpServer {
@@ -34,7 +32,7 @@ impl GitHubMcpServer {
             .map_err(|_| GitHubError::MissingToken)?;
 
         Ok(Self::new(
-            "https://api.githubcopilot.com/mcp/v1".to_string(),
+            "https://api.githubcopilot.com/mcp/".to_string(),
             token,
         ))
     }
@@ -45,36 +43,26 @@ impl GitHubMcpServer {
             client: Client::new(),
             base_url,
             token,
-            next_id: AtomicU64::new(1),
         }
     }
 
-    fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
-    }
+    /// POST a body to a path under the base URL and return the parsed response.
+    async fn send(&self, path: &str, body: Value) -> Result<Value, GitHubError> {
+        let url = format!("{}{}", self.base_url, path);
 
-    /// Send a JSON-RPC request to the GitHub MCP server and return
-    /// the parsed response. Errors if the server returns an RPC error.
-    async fn send(&self, method: &str, params: Value) -> Result<Value, GitHubError> {
-        let request = McpRequest::new(self.next_id(), method, params);
-
-        debug!(method = %method, "Sending MCP request to GitHub");
+        debug!(path = %path, "Sending MCP request to GitHub");
 
         let response = self
             .client
-            .post(&self.base_url)
+            .post(&url)
             .bearer_auth(&self.token)
-            .json(&request)
+            .json(&body)
             .send()
             .await?
-            .json::<McpResponse>()
+            .json::<Value>()
             .await?;
 
-        if let Some(err) = response.error {
-            return Err(GitHubError::McpError(err.message));
-        }
-
-        Ok(response.result.unwrap_or(Value::Null))
+        Ok(response)
     }
 
     /// Strip the "github/" namespace prefix from a tool name.
@@ -116,13 +104,13 @@ impl McpServer for GitHubMcpServer {
     async fn call_tool(&self, call: &ToolCall) -> BoxcarResult<ToolResult> {
         let tool_name = self.strip_prefix(&call.name).to_string();
 
-        let params = json!({
+        let body = json!({
             "name": tool_name,
             "arguments": call.input,
         });
 
         let result = self
-            .send("tools/call", params)
+            .send("tools/call", body)
             .await
             .map_err(|e| BoxcarError::ToolCallFailed(e.to_string()))?;
 
@@ -141,12 +129,19 @@ impl McpServer for GitHubMcpServer {
             let content: Vec<Value> = parsed
                 .content
                 .into_iter()
-                .filter_map(|c| c.text.map(|t| Value::String(t)))
+                .filter_map(|c| c.text.map(Value::String))
                 .collect();
             ToolOutput::Success {
                 content: Value::Array(content),
             }
         };
+
+        Ok(ToolResult {
+            name: call.name.clone(),
+            output,
+        })
+    }
+}
 
         Ok(ToolResult {
             name: call.name.clone(),

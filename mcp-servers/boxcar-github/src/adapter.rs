@@ -18,6 +18,7 @@ use crate::{
 ///
 /// Reads GITHUB_TOKEN from the environment on construction.
 /// Uses JSON-RPC 2.0 over HTTP POST to https://api.githubcopilot.com/mcp/
+/// Responses are in SSE (Server-Sent Events) format — we extract the data line.
 pub struct GitHubMcpServer {
     client: Client,
     base_url: String,
@@ -45,7 +46,7 @@ impl GitHubMcpServer {
         }
     }
 
-    /// Send a JSON-RPC 2.0 request to the GitHub MCP server.
+    /// Send a JSON-RPC 2.0 request and parse the SSE response.
     async fn send(&self, method: &str, params: Value) -> Result<Value, GitHubError> {
         debug!(method = %method, "Sending MCP request to GitHub");
 
@@ -56,15 +57,25 @@ impl GitHubMcpServer {
             "params": params,
         });
 
-        let response = self
+        let text = self
             .client
             .post(&self.base_url)
             .bearer_auth(&self.token)
+            .header("Accept", "application/json, text/event-stream")
             .json(&request)
             .send()
             .await?
-            .json::<Value>()
+            .text()
             .await?;
+
+        // GitHub returns SSE format: extract JSON from the "data: {...}" line
+        let json_str = text
+            .lines()
+            .find(|line| line.starts_with("data: "))
+            .map(|line| &line["data: ".len()..])
+            .ok_or_else(|| GitHubError::McpError("No data line in SSE response".to_string()))?;
+
+        let response: Value = serde_json::from_str(json_str)?;
 
         if let Some(err) = response.get("error") {
             return Err(GitHubError::McpError(err.to_string()));

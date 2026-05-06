@@ -30,10 +30,3 @@ pub struct McpContent {
     pub content_type: String,
     pub text: Option<String>,
 }
-
-#[derive(Debug, Deserialize)]
-pub struct McpContent {
-    #[serde(rename = "type")]
-    pub content_type: String,
-    pub text: Option<String>,
-}

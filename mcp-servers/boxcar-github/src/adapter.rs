@@ -57,16 +57,21 @@ impl GitHubMcpServer {
             "params": params,
         });
 
-        let text = self
+        let response = self
             .client
             .post(&self.base_url)
             .bearer_auth(&self.token)
             .header("Accept", "application/json, text/event-stream")
             .json(&request)
             .send()
-            .await?
-            .text()
             .await?;
+
+        let status = response.status();
+        let text = response.text().await?;
+
+        if !status.is_success() {
+            return Err(GitHubError::HttpStatus(status.as_u16(), text));
+        }
 
         // GitHub returns SSE format: extract JSON from the "data: {...}" line
         let json_str = text

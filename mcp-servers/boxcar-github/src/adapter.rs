@@ -142,10 +142,3 @@ impl McpServer for GitHubMcpServer {
         })
     }
 }
-
-        Ok(ToolResult {
-            name: call.name.clone(),
-            output,
-        })
-    }
-}

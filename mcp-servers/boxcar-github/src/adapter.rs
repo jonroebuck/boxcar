@@ -17,8 +17,7 @@ use crate::{
 /// Adapter that connects Boxcar to GitHub's remote MCP server.
 ///
 /// Reads GITHUB_TOKEN from the environment on construction.
-/// Uses GitHub's Streamable HTTP transport: POST to path-based endpoints
-/// under https://api.githubcopilot.com/mcp/
+/// Uses JSON-RPC 2.0 over HTTP POST to https://api.githubcopilot.com/mcp/
 pub struct GitHubMcpServer {
     client: Client,
     base_url: String,
@@ -46,23 +45,32 @@ impl GitHubMcpServer {
         }
     }
 
-    /// POST a body to a path under the base URL and return the parsed response.
-    async fn send(&self, path: &str, body: Value) -> Result<Value, GitHubError> {
-        let url = format!("{}{}", self.base_url, path);
+    /// Send a JSON-RPC 2.0 request to the GitHub MCP server.
+    async fn send(&self, method: &str, params: Value) -> Result<Value, GitHubError> {
+        debug!(method = %method, "Sending MCP request to GitHub");
 
-        debug!(path = %path, "Sending MCP request to GitHub");
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params,
+        });
 
         let response = self
             .client
-            .post(&url)
+            .post(&self.base_url)
             .bearer_auth(&self.token)
-            .json(&body)
+            .json(&request)
             .send()
             .await?
             .json::<Value>()
             .await?;
 
-        Ok(response)
+        if let Some(err) = response.get("error") {
+            return Err(GitHubError::McpError(err.to_string()));
+        }
+
+        Ok(response["result"].clone())
     }
 
     /// Strip the "github/" namespace prefix from a tool name.
@@ -104,13 +112,11 @@ impl McpServer for GitHubMcpServer {
     async fn call_tool(&self, call: &ToolCall) -> BoxcarResult<ToolResult> {
         let tool_name = self.strip_prefix(&call.name).to_string();
 
-        let body = json!({
-            "name": tool_name,
-            "arguments": call.input,
-        });
-
         let result = self
-            .send("tools/call", body)
+            .send("tools/call", json!({
+                "name": tool_name,
+                "arguments": call.input,
+            }))
             .await
             .map_err(|e| BoxcarError::ToolCallFailed(e.to_string()))?;
 

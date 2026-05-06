@@ -21,7 +21,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled binary from the build stage
-COPY --from=builder /app/target/release/boxcar-server /usr/local/bin/boxcar
+COPY --from=builder /app/target/release/boxcar /usr/local/bin/boxcar
 
 EXPOSE 3000
 

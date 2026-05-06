@@ -142,19 +142,14 @@ impl McpServer for GitHubMcpServer {
         let output = if parsed.is_error {
             let message = parsed
                 .content
-                .into_iter()
-                .filter_map(|c| c.text)
+                .iter()
+                .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
                 .collect::<Vec<_>>()
                 .join("\n");
             ToolOutput::Error { message }
         } else {
-            let content: Vec<Value> = parsed
-                .content
-                .into_iter()
-                .filter_map(|c| c.text.map(Value::String))
-                .collect();
             ToolOutput::Success {
-                content: Value::Array(content),
+                content: Value::Array(parsed.content),
             }
         };
 
@@ -162,5 +157,86 @@ impl McpServer for GitHubMcpServer {
             name: call.name.clone(),
             output,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use boxcar_core::tool::ToolOutput;
+    use serde_json::json;
+
+    fn make_result(raw_result: serde_json::Value) -> ToolOutput {
+        let parsed: McpToolCallResult = serde_json::from_value(raw_result).unwrap();
+        if parsed.is_error {
+            let message = parsed
+                .content
+                .iter()
+                .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            ToolOutput::Error { message }
+        } else {
+            ToolOutput::Success {
+                content: Value::Array(parsed.content),
+            }
+        }
+    }
+
+    #[test]
+    fn success_preserves_full_content_items() {
+        let raw = json!({
+            "content": [
+                {"type": "text", "text": "summary text"},
+                {"type": "resource", "uri": "file:///foo.rs", "mimeType": "text/plain", "text": "fn main() {}"}
+            ],
+            "isError": false
+        });
+
+        let output = make_result(raw);
+        match output {
+            ToolOutput::Success { content } => {
+                let items = content.as_array().unwrap();
+                assert_eq!(items.len(), 2);
+                assert_eq!(items[0]["type"], "text");
+                assert_eq!(items[0]["text"], "summary text");
+                assert_eq!(items[1]["type"], "resource");
+                assert_eq!(items[1]["uri"], "file:///foo.rs");
+                assert_eq!(items[1]["mimeType"], "text/plain");
+                assert_eq!(items[1]["text"], "fn main() {}");
+            }
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_extracts_text_from_content() {
+        let raw = json!({
+            "content": [{"type": "text", "text": "tool not found"}],
+            "isError": true
+        });
+
+        let output = make_result(raw);
+        match output {
+            ToolOutput::Error { message } => assert_eq!(message, "tool not found"),
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn error_joins_multiple_text_items() {
+        let raw = json!({
+            "content": [
+                {"type": "text", "text": "line one"},
+                {"type": "text", "text": "line two"}
+            ],
+            "isError": true
+        });
+
+        let output = make_result(raw);
+        match output {
+            ToolOutput::Error { message } => assert_eq!(message, "line one\nline two"),
+            other => panic!("expected Error, got {other:?}"),
+        }
     }
 }

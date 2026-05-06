@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 boxcar-core = { path = "../boxcar-core" }
+boxcar-github = { path = "../mcp-servers/boxcar-github" }
 axum = { version = "0.7", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
